@@ -8,23 +8,35 @@
 day26-mcp/
 ├── README.md                ← Bạn đang đọc file này
 ├── requirements.txt         ← pip install -r requirements.txt
+├── .env.example             ← Mẫu cấu hình OpenRouter / API Keys
 │
-├── 01-function-calling/     ← Bước 1: Function Calling thuần (Gemini SDK)
+├── 01-function-calling/     ← Bước 1: Function Calling thuần (OpenRouter / Gemini)
 │   ├── README.md
 │   └── weather_function_calling.py
 │
-├── 02-mcp-basics/           ← Bước 2: MCP server + client (không cần API key)
+├── 02-mcp-basics/           ← Bước 2: MCP server + client
 │   ├── README.md
-│   ├── weather_server.py
-│   └── weather_client.py
+│   ├── weather_server.py    ← FastMCP Server (Live Real-time Weather)
+│   ├── weather_client.py    ← Client MCP thuần
+│   └── weather_llm_client.py← Client MCP + OpenRouter LLM (Real-time Chat)
 │
-└── 03-production/           ← Bước 3: Auth, Tool Registry, Versioning
+├── 03-production/           ← Bước 3: Auth, Tool Registry, Versioning
+│   ├── README.md
+│   ├── auth_server.py
+│   ├── auth_client.py
+│   ├── registry.json
+│   ├── registry_client.py
+│   ├── registry_llm_client.py
+│   ├── versioned_server.py
+│   └── versioned_client.py
+│
+└── 04-lab/                  ← Bước 4: Remote MCP Server & Weather Agent
     ├── README.md
-    ├── auth_server.py
-    ├── auth_client.py
-    ├── registry.json
-    ├── registry_client.py
-    └── versioned_server.py
+    ├── mcp-server/          ← FastMCP Server chạy cổng 8085 (Live Weather)
+    │   └── weather.py
+    └── mcp-client/          ← Weather Agent Client (Streamable HTTP)
+        ├── weather_agent_openrouter.py
+        └── verify_setup.py
 ```
 
 ## Quick start

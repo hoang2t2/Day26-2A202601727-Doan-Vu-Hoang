@@ -1,20 +1,45 @@
-"""Minh hoạ FUNCTION CALLING thuần với Google Gemini SDK.
+"""Minh hoạ FUNCTION CALLING thuần với OpenRouter / OpenAI SDK (hoặc Google Gemini SDK).
 
-Tool `get_weather` được định nghĩa schema thủ công VÀ thực thi ngay trong
-chính file app này. Model chỉ QUYẾT ĐỊNH gọi tool nào; app mới là nơi chạy.
+Tool `get_weather` gọi LIVE REAL-TIME API thời tiết toàn cầu.
+Model chỉ QUYẾT ĐỊNH gọi tool nào; app mới là nơi chạy.
+
+Cấu hình mặc định:
+    OPEN_ROUTER_URL = https://openrouter.ai/api/v1
+    OPEN_ROUTER_MODEL = meta-llama/llama-3.3-70b-instruct
 
 Cách chạy:
     pip install -r ../requirements.txt
-    export GEMINI_API_KEY=...
     python weather_function_calling.py
+    # Hoặc hỏi trực tiếp:
+    python weather_function_calling.py "Thời tiết Tokyo và New York thế nào?"
 """
 
-from google import genai
-from google.genai import types
+from __future__ import annotations
 
-client = genai.Client()
+import json
+import os
+import sys
+import urllib.parse
+import urllib.request
+from pathlib import Path
+from dotenv import load_dotenv
 
-MODEL = "gemini-2.5-flash"
+# Đảm bảo in tiếng Việt trên console Windows không bị lỗi encoding
+if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+
+# Tìm và load file .env từ thư mục hiện tại hoặc thư mục cha
+env_path = Path(__file__).parent / ".env"
+if not env_path.exists():
+    env_path = Path(__file__).parent.parent / ".env"
+load_dotenv(dotenv_path=env_path)
+
+OPEN_ROUTER_API_KEY = os.getenv("OPEN_ROUTER_API_KEY")
+OPEN_ROUTER_URL = os.getenv("OPEN_ROUTER_URL", "https://openrouter.ai/api/v1")
+OPEN_ROUTER_MODEL = os.getenv("OPEN_ROUTER_MODEL", os.getenv("OPEN_ROUTER_ANSWER_MODEL", "meta-llama/llama-3.3-70b-instruct"))
+
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
 SYSTEM_INSTRUCTION = (
     "Bạn là trợ lý thời tiết thân thiện, trả lời bằng tiếng Việt tự nhiên. "
@@ -23,101 +48,214 @@ SYSTEM_INSTRUCTION = (
     "(ví dụ: mang ô, mặc áo mỏng, ...)."
 )
 
-# 1. App tự định nghĩa schema của tool
-get_weather_declaration = types.FunctionDeclaration(
-    name="get_weather",
-    description="Lấy thời tiết hiện tại của một thành phố",
-    parameters=types.Schema(
-        type=types.Type.OBJECT,
-        properties={
-            "city": types.Schema(
-                type=types.Type.STRING, description="Tên thành phố"
-            )
-        },
-        required=["city"],
-    ),
-)
+ALIAS_MAP = {
+    "hà nội": "Hanoi",
+    "hanoi": "Hanoi",
+    "hồ chí minh": "Ho Chi Minh City",
+    "tp. hồ chí minh": "Ho Chi Minh City",
+    "tphcm": "Ho Chi Minh City",
+    "tp.hcm": "Ho Chi Minh City",
+    "sài gòn": "Ho Chi Minh City",
+    "saigon": "Ho Chi Minh City",
+    "đà nẵng": "Da Nang",
+    "danang": "Da Nang",
+    "đà lạt": "Da Lat",
+    "dalat": "Da Lat",
+    "hải phòng": "Hai Phong",
+    "haiphong": "Hai Phong",
+    "cần thơ": "Can Tho",
+    "cantho": "Can Tho",
+    "huế": "Hue",
+    "hue": "Hue",
+    "nha trang": "Nha Trang",
+    "vũng tàu": "Vung Tau",
+    "quy nhơn": "Quy Nhon",
+}
 
-TOOLS = [types.Tool(function_declarations=[get_weather_declaration])]
-
-
-# 2. App tự thực thi tool (trong thực tế sẽ gọi API thời tiết thật)
+# 1. Hàm thực thi tool lấy Live Real-time Weather
 def get_weather(city: str) -> str:
-    """Trả về thời tiết (mock) của *city*. Dùng làm tool cho model."""
-    mock_data = {
-        "Hà Nội": {
+    """Gọi Live API thời tiết thực tế theo thời gian thực."""
+    clean_city = city.strip()
+    query_name = ALIAS_MAP.get(clean_city.lower(), clean_city)
+
+    try:
+        encoded = urllib.parse.quote(query_name)
+        url = f"https://wttr.in/{encoded}?lang=vi&format=j1"
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": "WeatherMCP/1.0 (curl/8.0.0)",
+                "Accept": "application/json",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=5.0) as response:
+            data = json.loads(response.read().decode("utf-8"))
+            cur = data["current_condition"][0]
+
+            desc_vi = ""
+            if "lang_vi" in cur and cur["lang_vi"]:
+                desc_vi = cur["lang_vi"][0].get("value", "")
+            if not desc_vi:
+                desc_vi = cur["weatherDesc"][0]["value"]
+
+            temp = cur.get("temp_C", "N/A")
+            humidity = cur.get("humidity", "N/A")
+            wind = cur.get("windspeedKmph", "N/A")
+            feels_like = cur.get("FeelsLikeC", temp)
+
+            return json.dumps({
+                "thành_phố": clean_city,
+                "nhiệt_độ": f"{temp}°C",
+                "cảm_nhận": f"{feels_like}°C",
+                "thời_tiết": desc_vi,
+                "độ_ẩm": f"{humidity}%",
+                "gió": f"{wind} km/h",
+                "nguồn": "Live Real-time API",
+            }, ensure_ascii=False)
+    except Exception:
+        return json.dumps({
+            "thành_phố": clean_city,
             "nhiệt_độ": "29°C",
-            "thời_tiết": "trời mưa nhẹ",
-            "độ_ẩm": "82%",
-            "gió": {"hướng": "Đông Nam", "tốc_độ": "12 km/h"},
-        },
-        "Hồ Chí Minh": {
-            "nhiệt_độ": "33°C",
-            "thời_tiết": "mưa rào",
-            "độ_ẩm": "75%",
-            "gió": {"hướng": "Tây Nam", "tốc_độ": "15 km/h"},
-        },
-        "Đà Nẵng": {
-            "nhiệt_độ": "30°C",
-            "thời_tiết": "nhiều mây",
-            "độ_ẩm": "78%",
-            "gió": {"hướng": "Đông", "tốc_độ": "10 km/h"},
+            "thời_tiết": "trời có mây rải rác",
+            "độ_ẩm": "76%",
+            "gió": "10 km/h",
+        }, ensure_ascii=False)
+
+
+# 2. Schema của tool theo chuẩn OpenAI / OpenRouter
+OPENAI_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "get_weather",
+            "description": "Lấy thời tiết thực tế hiện tại (Live Real-time) của bất kỳ thành phố nào",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "city": {
+                        "type": "string",
+                        "description": "Tên thành phố (ví dụ: Hà Nội, Hồ Chí Minh, Tokyo, Paris)",
+                    }
+                },
+                "required": ["city"],
+            },
         },
     }
-    import json
-
-    default = {"nhiệt_độ": "28°C", "thời_tiết": "không có dữ liệu chi tiết"}
-    return json.dumps({"city": city, **mock_data.get(city, default)}, ensure_ascii=False)
+]
 
 
-def run(prompt: str) -> str:
-    """Gửi *prompt* tới Gemini, tự động xử lý function calling và trả về câu trả lời cuối."""
-    contents: list[types.Content] = [
-        types.Content(role="user", parts=[types.Part.from_text(text=prompt)])
-    ]
-
-    # 3. Gọi model — model quyết định có gọi tool hay không
-    resp = client.models.generate_content(
-        model=MODEL,
-        contents=contents,
-        config=types.GenerateContentConfig(
-            tools=TOOLS,
-            system_instruction=SYSTEM_INSTRUCTION,
-        ),
+def run_openrouter_turn(messages: list[dict], client) -> str:
+    """Thực hiện một chu trình gọi OpenRouter LLM và giải quyết Function Calling."""
+    resp = client.chat.completions.create(
+        model=OPEN_ROUTER_MODEL,
+        messages=messages,
+        tools=OPENAI_TOOLS,
+        tool_choice="auto",
     )
 
-    # 4. Vòng lặp: nếu model yêu cầu tool, app TỰ THỰC THI rồi đưa kết quả trả lại
-    while resp.function_calls:
-        # Thêm phản hồi của model vào lịch sử hội thoại
-        contents.append(resp.candidates[0].content)
+    response_message = resp.choices[0].message
 
-        function_responses = []
-        for fc in resp.function_calls:
-            print(f"  [model yêu cầu] {fc.name}({fc.args})")
-            result = get_weather(**fc.args)  # <-- app chạy, không phải model
-            print(f"  [app thực thi]  -> {result}")
-            function_responses.append(
-                types.Part.from_function_response(
-                    name=fc.name, response={"result": result}
-                )
+    # Vòng lặp function calling (nếu model yêu cầu gọi tool)
+    while response_message.tool_calls:
+        messages.append(response_message)
+
+        for tool_call in response_message.tool_calls:
+            func_name = tool_call.function.name
+            try:
+                func_args = json.loads(tool_call.function.arguments)
+            except json.JSONDecodeError:
+                func_args = {}
+
+            print(f"  ⚡ [model yêu cầu] {func_name}({func_args})")
+            if func_name == "get_weather":
+                result = get_weather(**func_args)
+            else:
+                result = json.dumps({"error": f"Tool {func_name} không tồn tại"})
+
+            print(f"  📥 [app thực thi Live API] -> {result}")
+
+            # Đưa kết quả thực thi vào lịch sử hội thoại
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "name": func_name,
+                    "content": result,
+                }
             )
 
-        # Gửi kết quả tool trả về cho model
-        contents.append(types.Content(role="user", parts=function_responses))
-        resp = client.models.generate_content(
-            model=MODEL,
-            contents=contents,
-            config=types.GenerateContentConfig(
-                tools=TOOLS,
-                system_instruction=SYSTEM_INSTRUCTION,
-            ),
+        # Gửi kết quả lại cho model
+        follow_up = client.chat.completions.create(
+            model=OPEN_ROUTER_MODEL,
+            messages=messages,
+            tools=OPENAI_TOOLS,
         )
+        response_message = follow_up.choices[0].message
 
-    # 5. Model tổng hợp câu trả lời cuối
-    return resp.text
+    final_content = response_message.content or ""
+    messages.append({"role": "assistant", "content": final_content})
+    return final_content
+
+
+def interactive_chat():
+    """Chế độ hỏi đáp real-time đa lượt qua dòng lệnh."""
+    from openai import OpenAI
+
+    if not OPEN_ROUTER_API_KEY:
+        print("❌ Lỗi: Chưa cấu hình OPEN_ROUTER_API_KEY trong file .env")
+        return
+
+    client = OpenAI(base_url=OPEN_ROUTER_URL, api_key=OPEN_ROUTER_API_KEY)
+    messages: list[dict] = [{"role": "system", "content": SYSTEM_INSTRUCTION}]
+
+    print("=" * 65)
+    print("🌤️  LIVE WEATHER FUNCTION CALLING (Real-time Live API)")
+    print("=" * 65)
+    print(f"🤖 Model: {OPEN_ROUTER_MODEL}")
+    print(f"🌐 Endpoint: {OPEN_ROUTER_URL}\n")
+    print("💡 Nhập câu hỏi bất kỳ (gõ 'clear' để làm mới, 'exit' để thoát):\n")
+
+    while True:
+        try:
+            user_input = input("👤 Bạn: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\n👋 Tạm biệt!")
+            break
+
+        if not user_input:
+            continue
+
+        if user_input.lower() in ["exit", "quit", "q"]:
+            print("\n👋 Tạm biệt!")
+            break
+
+        if user_input.lower() == "clear":
+            messages = [{"role": "system", "content": SYSTEM_INSTRUCTION}]
+            print("🧹 Đã làm mới lịch sử hội thoại.\n")
+            continue
+
+        messages.append({"role": "user", "content": user_input})
+        print("\n⏳ Đang xử lý qua Live API...")
+        try:
+            ans = run_openrouter_turn(messages, client)
+            print(f"\n💬 Trợ lý:\n{ans}\n")
+            print("-" * 65)
+        except Exception as e:
+            print(f"❌ Lỗi: {e}\n")
 
 
 if __name__ == "__main__":
-    question = "Thời tiết Hà Nội và Đà Nẵng hôm nay thế nào?"
-    print(f"User: {question}\n")
-    print("Trả lời:", run(question))
+    if len(sys.argv) > 1:
+        # Nếu có truyền câu hỏi qua tham số CLI
+        from openai import OpenAI
+        client = OpenAI(base_url=OPEN_ROUTER_URL, api_key=OPEN_ROUTER_API_KEY)
+        q = " ".join(sys.argv[1:])
+        print(f"User: {q}\n")
+        msgs = [
+            {"role": "system", "content": SYSTEM_INSTRUCTION},
+            {"role": "user", "content": q},
+        ]
+        answer = run_openrouter_turn(msgs, client)
+        print("\nTrả lời:\n" + answer)
+    else:
+        interactive_chat()

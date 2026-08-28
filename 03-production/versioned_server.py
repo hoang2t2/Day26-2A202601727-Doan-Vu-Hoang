@@ -17,48 +17,103 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 
-from mcp.server.mcpserver import MCPServer
+try:
+    from mcp.server.fastmcp import FastMCP
+except ImportError:
+    from fastmcp import FastMCP
 
 SERVER_VERSION = "2.0.0"
 
-mcp = MCPServer(
+mcp = FastMCP(
     "weather-v2",
     instructions=f"Weather MCP Server v{SERVER_VERSION}. "
     "Hỗ trợ get_weather (v1, backward compat) và get_weather_v2 (chi tiết hơn).",
 )
 
+ALIAS_MAP = {
+    "hanoi": "Hanoi",
+    "hà nội": "Hanoi",
+    "danang": "Danang",
+    "đà nẵng": "Danang",
+    "saigon": "Saigon",
+    "sài gòn": "Saigon",
+    "hồ chí minh": "Saigon",
+    "ho chi minh": "Saigon",
+    "dalat": "Dalat",
+    "đà lạt": "Dalat",
+    "haiphong": "Haiphong",
+    "hải phòng": "Haiphong",
+    "cantho": "Cantho",
+    "cần thơ": "Cantho",
+}
+
 _MOCK_DB = {
     "Hanoi": {
         "temp": 29,
-        "condition": "trời mưa",
+        "condition": "trời mưa nhẹ",
         "humidity": 82,
         "wind_speed": 12,
         "forecast": [
-            {"day": "tomorrow", "temp": 27, "condition": "mưa nhẹ"},
-            {"day": "day_after", "temp": 31, "condition": "nắng"},
+            {"day": "ngày mai", "temp": 27, "condition": "mưa nhẹ, nhiệt độ giảm"},
+            {"day": "ngày kia", "temp": 31, "condition": "nắng ráo trở lại"},
         ],
     },
     "Danang": {
         "temp": 30,
-        "condition": "nhiều mây",
+        "condition": "nhiều mây, gió mát",
         "humidity": 78,
         "wind_speed": 10,
         "forecast": [
-            {"day": "tomorrow", "temp": 32, "condition": "nắng"},
-            {"day": "day_after", "temp": 29, "condition": "mưa rào"},
+            {"day": "ngày mai", "temp": 32, "condition": "nắng đẹp"},
+            {"day": "ngày kia", "temp": 29, "condition": "mưa rào nhẹ buổi chiều"},
+        ],
+    },
+    "Saigon": {
+        "temp": 33,
+        "condition": "nắng nhiều, nhiệt độ ấm áp",
+        "humidity": 72,
+        "wind_speed": 14,
+        "forecast": [
+            {"day": "ngày mai", "temp": 34, "condition": "nắng gắt, chiều có mưa dông"},
+            {"day": "ngày kia", "temp": 33, "condition": "mây rải rác"},
+        ],
+    },
+    "Dalat": {
+        "temp": 21,
+        "condition": "se lạnh, sương mù nhẹ",
+        "humidity": 86,
+        "wind_speed": 7,
+        "forecast": [
+            {"day": "ngày mai", "temp": 20, "condition": "sương mù, mưa phùn"},
+            {"day": "ngày kia", "temp": 22, "condition": "nắng dịu mát"},
         ],
     },
 }
+
+
+def _resolve_city_data(city: str) -> tuple[str, dict]:
+    key = ALIAS_MAP.get(city.strip().lower(), city.strip().title())
+    data = _MOCK_DB.get(key)
+    if not data:
+        data = {
+            "temp": 28,
+            "condition": "trời có mây, nhiệt độ dễ chịu",
+            "humidity": 75,
+            "wind_speed": 10,
+            "forecast": [
+                {"day": "ngày mai", "temp": 29, "condition": "nắng nhẹ"},
+                {"day": "ngày kia", "temp": 28, "condition": "mây rải rác"},
+            ],
+        }
+    return key, data
 
 
 # ── Tool v1 (giữ nguyên cho backward compatibility) ──────────────────
 @mcp.tool()
 def get_weather(city: str) -> str:
     """[v1] Lấy thời tiết hiện tại — trả chuỗi đơn giản. Deprecated, dùng get_weather_v2."""
-    data = _MOCK_DB.get(city)
-    if data:
-        return f"{city}: {data['temp']}°C, {data['condition']}"
-    return f"{city}: 28°C, không có dữ liệu chi tiết"
+    resolved_name, data = _resolve_city_data(city)
+    return f"{city}: {data['temp']}°C, {data['condition']}"
 
 
 # ── Tool v2 (thêm tính năng, không break v1) ─────────────────────────
@@ -71,19 +126,14 @@ def get_weather_v2(
     """[v2] Lấy thời tiết chi tiết — JSON, hỗ trợ forecast và đơn vị đo.
 
     Args:
-        city: Tên thành phố (ví dụ: Hanoi, Danang)
+        city: Tên thành phố (ví dụ: Hanoi, Danang, Đà Nẵng, Sài Gòn)
         include_forecast: Có trả thêm dự báo 2 ngày tới không (mặc định: False)
         units: Đơn vị nhiệt độ — "celsius" hoặc "fahrenheit" (mặc định: celsius)
     """
-    data = _MOCK_DB.get(city)
-    if not data:
-        return json.dumps(
-            {"city": city, "error": "không có dữ liệu", "api_version": "2.0"},
-            ensure_ascii=False,
-        )
+    resolved_name, data = _resolve_city_data(city)
 
     temp = data["temp"]
-    if units == "fahrenheit":
+    if units.lower() == "fahrenheit":
         temp = round(temp * 9 / 5 + 32, 1)
 
     result: dict = {

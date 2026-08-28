@@ -16,7 +16,6 @@ Ví dụ này minh hoạ ý tưởng với một file JSON đơn giản.
 
 Cách chạy:
     pip install -r ../requirements.txt     # từ thư mục gốc repo
-    cd 03-production
     python registry_client.py
 """
 
@@ -30,6 +29,10 @@ from pathlib import Path
 
 import httpx
 
+# Đảm bảo in tiếng Việt trên console Windows
+if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamable_http_client
@@ -41,7 +44,7 @@ class ToolRegistry:
     """Danh mục trung tâm — agent tra cứu tool theo tag, tên, hoặc mô tả."""
 
     def __init__(self, path: Path = REGISTRY_PATH) -> None:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
         self.tools: dict[str, dict] = data["tools"]
         self.servers: dict[str, dict] = data["servers"]
@@ -87,9 +90,18 @@ async def connect_and_call(match: dict, tool_args: dict) -> str:
     tool_name = match["tool"]
 
     if server.get("transport") == "stdio":
+        # Resolve đường dẫn script server tương đối theo vị trí thư mục 03-production
+        resolved_args = []
+        for arg in server.get("args", []):
+            if arg.endswith(".py"):
+                resolved_path = (REGISTRY_PATH.parent / arg).resolve()
+                resolved_args.append(str(resolved_path))
+            else:
+                resolved_args.append(arg)
+
         params = StdioServerParameters(
             command=sys.executable,
-            args=server["args"],
+            args=resolved_args,
         )
         async with stdio_client(params) as (read, write):
             async with ClientSession(read, write) as session:

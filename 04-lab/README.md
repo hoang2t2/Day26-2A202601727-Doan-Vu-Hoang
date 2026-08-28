@@ -1,89 +1,80 @@
 # Lab 04 — Weather Agent with Remote MCP Server
 
-A weather agent built with Google ADK that connects to an MCP server via Streamable HTTP transport.
+A full-stack weather agent connecting to a remote MCP server via **Streamable HTTP** transport, powered by **OpenRouter LLM (`meta-llama/llama-3.3-70b-instruct`)** or Google ADK.
 
 ## Architecture
 
 ```
-┌─────────────────┐   Streamable HTTP    ┌─────────────────┐      REST       ┌─────────────────┐
-│   ADK Agent     │ ──────────────────── │   MCP Server    │ ─────────────── │  WeatherAPI.com │
-│  (mcp-client)   │   localhost:8085/mcp │  (mcp-server)   │                 │                 │
-└─────────────────┘                      └─────────────────┘                 └─────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│  👤 User (Terminal / Interactive Chat / Web)                    │
+└────────────────────────────────┬────────────────────────────────┘
+                                 │
+                                 ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  🤖 OpenRouter LLM (meta-llama/llama-3.3-70b-instruct)          │
+│  - Phân tích câu hỏi người dùng                                │
+│  - Tự động quyết định gọi tool nào và bao nhiêu lần             │
+└────────────────────────────────┬────────────────────────────────┘
+                                 │ Streamable HTTP (POST/GET/DELETE)
+                                 ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  📡 Remote FastMCP Server (localhost:8085/mcp)                  │
+│  - `get_current_weather(city)`                                  │
+│  - `get_forecast(city, days)`                                   │
+│  - `health_check()`                                             │
+└────────────────────────────────┬────────────────────────────────┘
+                                 │
+                                 ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  🌐 Weather Data Source                                         │
+│  - WeatherAPI.com (nếu có WEATHERAPI_KEY)                       │
+│  - Live Real-Time Weather API fallback (không cần API key)      │
+└─────────────────────────────────────────────────────────────────┘
 ```
+
+---
 
 ## Tools
 
 | Tool | Description |
-|------|-------------|
-| `get_current_weather(city)` | Get current weather conditions for a city |
-| `get_forecast(city, days)` | Get weather forecast (1–3 days) |
-| `health_check()` | Verify server is running |
+|---|---|
+| `get_current_weather(city)` | Lấy nhiệt độ, cảm nhận, độ ẩm, gió thực tế của thành phố |
+| `get_forecast(city, days)` | Dự báo thời tiết từ 1 đến 3 ngày tới |
+| `health_check()` | Kiểm tra trạng thái hoạt động của server |
 
-## ADK làm gì trong Lab này?
+---
 
-ADK (Agent Development Kit) đóng vai trò **MCP Client** 
+## Hướng dẫn chạy Lab 04
+
+### Bước 1: Khởi động MCP Server (Terminal 1)
+
+```powershell
+cd 04-lab/mcp-server
+python weather.py
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                                                                 │
-│  1. KẾT NỐI tới MCP Server qua Streamable HTTP                  │
-│     StreamableHTTPConnectionParams(url="localhost:8085/mcp")    │
-│                                                                 │
-│  2. KHÁM PHÁ tools tự động (list_tools)                         │
-│     McpToolset → tự hỏi server "anh có tool gì?"                │
-│     → nhận về: get_current_weather, get_forecast, health_check  │
-│                                                                 │
-│  3. TRUYỀN tools cho LLM (Gemini)                               │
-│     Agent(model="gemini-2.5-flash", tools=[weather_tools])      │
-│     → Gemini biết nó có thể gọi 3 tools trên                    │
-│                                                                 │
-│  4. ĐIỀU PHỐI vòng lặp Function Calling                         │
-│     User hỏi → Gemini chọn tool → ADK gọi MCP Server            │
-│     → nhận kết quả → đưa lại cho Gemini tổng hợp                │
-│                                                                 │
-│  5. CUNG CẤP giao diện web (adk web)                            │
-│     → http://localhost:8000 để chat với agent                   │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
+> Server sẽ khởi động trên `http://0.0.0.0:8085/mcp` và sẵn sàng nhận kết nối Streamable HTTP.
+
+---
+
+### Bước 2: Chạy Weather Agent Client với OpenRouter LLM (Terminal 2)
+
+```powershell
+cd 04-lab/mcp-client
+python weather_agent_openrouter.py
 ```
 
-So với bài 02 (viết client thủ công bằng `mcp.ClientSession`), ADK giúp bạn **không phải viết vòng lặp function calling thủ công** nữa. Toàn bộ luồng list_tools → model quyết định → call_tool → model tổng hợp được ADK xử lý tự động.
-
-## Setup
-
-### 1. MCP Server
-
-```bash
-cd mcp-server
-uv sync
-
-# Set your WeatherAPI key (get one free at https://weatherapi.com)
-export WEATHERAPI_KEY="your_weatherapi_key"
-
-# Start the server (runs on port 8085 by default)
-uv run python weather.py
+**Hoặc hỏi nhanh 1 câu trực tiếp từ dòng lệnh:**
+```powershell
+python weather_agent_openrouter.py "Dự báo thời tiết 3 ngày tới ở Đà Nẵng và Đà Lạt"
 ```
 
-The server will be available at `http://localhost:8085/mcp`.
+---
 
-### 2. ADK Agent (Client)
+## Cấu hình môi trường (`.env`)
 
-```bash
-cd mcp-client
-uv sync
-
-# Create .env file with your Gemini API key
-echo "GOOGLE_API_KEY=your_gemini_api_key" > .env
-
-# Start ADK web interface
-uv run adk web
-```
-
-Open http://localhost:8000 in your browser, select `weather_agent`, and ask about the weather.
-
-## Configuration
-
-| Variable | Where | Description |
-|----------|-------|-------------|
-| `WEATHERAPI_KEY` | mcp-server | API key from weatherapi.com |
-| `GOOGLE_API_KEY` | mcp-client/.env | Gemini API key |
-| `PORT` | mcp-server (env) | Override server port (default: 8085) |
+| Biến | Vị trí | Mô tả |
+|---|---|---|
+| `OPEN_ROUTER_API_KEY` | `.env` | API key OpenRouter |
+| `OPEN_ROUTER_MODEL` | `.env` | `meta-llama/llama-3.3-70b-instruct` |
+| `WEATHERAPI_KEY` | `.env` | API key weatherapi.com (tuỳ chọn) |
+| `PORT` | env | Cổng chạy server (mặc định: `8085`) |
